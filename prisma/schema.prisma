@@ -1,0 +1,713 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------------------------------------------------
+// 1. AUTHENTICATION & MULTI-ROLE RBAC
+// -------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  username      String    @unique
+  passwordHash  String
+  fullName      String
+  phone         String?
+  role          String    @default("CASHIER") // SUPER_ADMIN, STORE_OWNER, STORE_MANAGER, CASHIER, INVENTORY_MANAGER, PURCHASING_OFFICER, ACCOUNTANT, WAREHOUSE_STAFF, AUDITOR
+  avatar        String?
+  isActive      Boolean   @default(true)
+  storeId       String?
+  store         Store?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  shifts        Shift[]
+  sales         Sale[]
+  auditLogs     AuditLog[]
+  transactions  InventoryTransaction[]
+  purchaseOrders PurchaseOrder[]
+  goodsReceipts GoodsReceipt[]
+  cashMovements CashMovement[]
+  expenses      Expense[]
+  transfersApproved StockTransfer[] @relation("ApprovedTransfers")
+  transfersInitiated StockTransfer[] @relation("InitiatedTransfers")
+  openedDays    StoreDay[] @relation("StoreDayOpener")
+  closedDays    StoreDay[] @relation("StoreDayCloser")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String   // CREATE, UPDATE, DELETE, SALE, REFUND, ADJUSTMENT, LOGIN, REGISTER_OPEN, REGISTER_CLOSE, RECEIVE_STOCK
+  module     String   // POS, INVENTORY, PURCHASING, PRODUCTS, USERS, REGISTER, RETURNS, SETTINGS
+  details    String?  // JSON string or text summary
+  oldValue   String?  // Previous state
+  newValue   String?  // New state
+  ipAddress  String?
+  storeId    String?
+  store      Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([action])
+  @@index([module])
+  @@index([createdAt])
+}
+
+// -------------------------------------------------------------
+// 2. STORE & HARDWARE / CASH REGISTER
+// -------------------------------------------------------------
+
+model Store {
+  id             String    @id @default(cuid())
+  name           String
+  code           String    @unique // e.g. STR-01, HO, WH-01
+  isWarehouse    Boolean   @default(false)
+  address        String?
+  city           String?
+  state          String?
+  country        String    @default("Australia") // Australia, United States, UK, Canada, Bangladesh, etc.
+  currency       String    @default("AUD")
+  currencySymbol String    @default("$")
+  phone          String?
+  email          String?
+  taxNumber      String?   // ABN, EIN, VAT ID
+  taxInclusive   Boolean   @default(true)
+  taxRateDefault Float     @default(10.0) // 10% GST in Australia
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  users          User[]
+  registers      CashRegister[]
+  inventory      Inventory[]
+  sales          Sale[]
+  purchaseOrders PurchaseOrder[]
+  auditLogs      AuditLog[]
+  expenses       Expense[]
+  transfersFrom  StockTransfer[] @relation("TransfersFrom")
+  transfersTo    StockTransfer[] @relation("TransfersTo")
+  shifts         Shift[]
+  storeDays      StoreDay[]
+}
+
+model CashRegister {
+  id             String    @id @default(cuid())
+  storeId        String
+  store          Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name           String    // "POS Terminal 01"
+  code           String    // "REG-01"
+  isActive       Boolean   @default(true)
+  currentShiftId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  shifts         Shift[]
+  sales          Sale[]
+
+  @@unique([storeId, code])
+}
+
+model Shift {
+  id             String    @id @default(cuid())
+  registerId     String
+  register       CashRegister @relation(fields: [registerId], references: [id])
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  storeId        String
+  store          Store     @relation(fields: [storeId], references: [id])
+  startTime      DateTime  @default(now())
+  endTime        DateTime?
+  openingCash    Float     @default(0.0)
+  closingCash    Float?
+  expectedCash   Float?
+  cashDifference Float?    // Shortage (-) or Overage (+)
+  status         String    @default("OPEN") // OPEN, CLOSED
+  notes          String?
+  storeDayId     String?
+  storeDay       StoreDay? @relation(fields: [storeDayId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  cashMovements  CashMovement[]
+  sales          Sale[]
+}
+
+model StoreDay {
+  id             String    @id @default(cuid())
+  storeId        String
+  store          Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  openedById     String
+  openedBy       User      @relation("StoreDayOpener", fields: [openedById], references: [id])
+  closedById     String?
+  closedBy       User?     @relation("StoreDayCloser", fields: [closedById], references: [id], onDelete: SetNull)
+  
+  businessDate   DateTime  @default(now())
+  openedAt       DateTime  @default(now())
+  closedAt       DateTime?
+  status         String    @default("OPEN") // OPEN, CLOSED
+  
+  grossSales     Float?
+  netSales       Float?
+  taxTotal       Float?
+  refundsTotal   Float?
+  discountsTotal Float?
+  cashSales      Float?
+  cardSales      Float?
+  expectedCash   Float?
+  actualCash     Float?
+  cashDifference Float?
+  transactions   Int?
+  customers      Int?
+  notes          String?
+  
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  
+  shifts         Shift[]
+}
+
+model CashMovement {
+  id         String   @id @default(cuid())
+  shiftId    String
+  shift      Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  type       String   // CASH_IN, CASH_OUT, PAYOUT, FLOAT_ADD
+  amount     Float
+  reason     String
+  createdAt  DateTime @default(now())
+}
+
+// -------------------------------------------------------------
+// 3. PRODUCT CATALOG, CATEGORIES & BRANDS
+// -------------------------------------------------------------
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  icon        String?
+  parentId    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products    Product[]
+}
+
+model Brand {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products    Product[]
+}
+
+model Supplier {
+  id            String    @id @default(cuid())
+  name          String
+  contactPerson String?
+  email         String?
+  phone         String?
+  address       String?
+  taxId         String?
+  paymentTerms  String?   // Net 30, COD, Net 15
+  bankInfo      String?
+  notes         String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  products      Product[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model Product {
+  id               String    @id @default(cuid())
+  name             String
+  shortName        String?
+  description      String?
+  categoryId       String
+  category         Category  @relation(fields: [categoryId], references: [id])
+  brandId          String?
+  brand            Brand?    @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  supplierId       String?
+  supplier         Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  
+  sku              String    @unique
+  barcode          String    @unique // EAN-13, UPC-A, Code-128
+  gtin             String?
+  productType      String    @default("STANDARD") // STANDARD, WEIGHTED, PACKAGED, VARIANT, PERISHABLE, SERVICE
+  unit             String    @default("pcs") // pcs, kg, g, l, ml, pack, box
+  weight           Float?    // For weighted products (e.g. 0.5 kg)
+  size             String?
+  color            String?
+
+  costPrice        Float     @default(0.0) // Purchase cost
+  sellingPrice     Float     // Regular retail price
+  wholesalePrice   Float?    // Wholesale bulk price
+  taxRate          Float     @default(10.0) // Specific tax % override or default
+  isTaxExempt      Boolean   @default(false)
+  status           String    @default("ACTIVE") // ACTIVE, INACTIVE, ARCHIVED
+  image            String?
+
+  // Stock Control parameters
+  minStockLevel    Int       @default(5)
+  maxStockLevel    Int       @default(100)
+  reorderPoint     Int       @default(10)
+  shelfLocation    String?   // Aisle 3, Shelf B2
+  warehouseLocation String?
+
+  // Perishable & Batch tracking
+  isPerishable     Boolean   @default(false)
+  hasBatchTracking Boolean   @default(false)
+  expiryWarningDays Int      @default(14) // Alert days before expiry
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  variants         ProductVariant[]
+  batches          StockBatch[]
+  inventory        Inventory[]
+  saleItems        SaleItem[]
+  poItems          PurchaseOrderItem[]
+  grItems          GoodsReceiptItem[]
+  transferItems    StockTransferItem[]
+  refundItems      RefundItem[]
+  inventoryTxns    InventoryTransaction[]
+
+  @@index([barcode])
+  @@index([sku])
+  @@index([categoryId])
+  @@index([name])
+}
+
+model ProductVariant {
+  id           String   @id @default(cuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name         String   // e.g. "Small / Red", "1kg Bag"
+  sku          String   @unique
+  barcode      String   @unique
+  costPrice    Float
+  sellingPrice Float
+  stock        Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model StockBatch {
+  id                String    @id @default(cuid())
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storeId           String
+  batchNumber       String    // e.g. "BATCH-2026-09"
+  manufacturingDate DateTime?
+  expiryDate        DateTime
+  costPrice         Float
+  receivedQty       Int
+  currentQty        Int
+  status            String    @default("ACTIVE") // ACTIVE, DEPLETED, EXPIRED, QUARANTINED
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([expiryDate])
+  @@index([batchNumber])
+}
+
+// -------------------------------------------------------------
+// 4. INVENTORY & TRANSACTIONAL AUDIT TRAIL
+// -------------------------------------------------------------
+
+model Inventory {
+  id           String   @id @default(cuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storeId      String
+  store        Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  onHand       Int      @default(0) // Physical count in store
+  available    Int      @default(0) // onHand - reserved
+  reserved     Int      @default(0) // Held in orders/laybys
+  damaged      Int      @default(0) // Identified as damaged/written-off
+  reorderPoint Int      @default(10)
+  maxStock     Int      @default(100)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([productId, storeId])
+}
+
+model InventoryTransaction {
+  id           String   @id @default(cuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storeId      String
+  type         String   // OPENING, PURCHASE, SALE, RETURN, DAMAGE, ADJUSTMENT, TRANSFER_OUT, TRANSFER_IN
+  quantity     Int      // positive for additions (+), negative for subtractions (-)
+  balanceAfter Int      // Running on-hand balance after this transaction
+  unitCost     Float?
+  referenceId  String?  // Sale ID, PO ID, Return ID, Transfer ID
+  reason       String?  // e.g. "Scanned at POS checkout #00123", "Damaged bottle", "Physical count discrepancy"
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([productId])
+  @@index([storeId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// -------------------------------------------------------------
+// 5. PURCHASING & GOODS RECEIVING
+// -------------------------------------------------------------
+
+model PurchaseOrder {
+  id               String    @id @default(cuid())
+  poNumber         String    @unique // PO-2026-0001
+  supplierId       String
+  supplier         Supplier  @relation(fields: [supplierId], references: [id])
+  storeId          String
+  store            Store     @relation(fields: [storeId], references: [id])
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+  
+  orderDate        DateTime  @default(now())
+  expectedDelivery DateTime?
+  status           String    @default("DRAFT") // DRAFT, PENDING, APPROVED, ORDERED, PARTIALLY_RECEIVED, RECEIVED, CANCELLED
+  subtotal         Float     @default(0.0)
+  taxTotal         Float     @default(0.0)
+  shippingCost     Float     @default(0.0)
+  grandTotal       Float     @default(0.0)
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  items            PurchaseOrderItem[]
+  goodsReceipts    GoodsReceipt[]
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  
+  orderedQty      Int
+  receivedQty     Int           @default(0)
+  unitCost        Float
+  taxRate         Float         @default(0.0)
+  lineTotal       Float
+  createdAt       DateTime      @default(now())
+}
+
+model GoodsReceipt {
+  id              String        @id @default(cuid())
+  grNumber        String        @unique // GRN-2026-0001
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  storeId         String
+  supplierInvoice String?
+  receivedDate    DateTime      @default(now())
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  items           GoodsReceiptItem[]
+}
+
+model GoodsReceiptItem {
+  id             String       @id @default(cuid())
+  goodsReceiptId String
+  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id])
+  
+  orderedQty     Int          @default(0)
+  receivedQty    Int          // Total physical delivered
+  damagedQty     Int          @default(0) // Rejected/damaged
+  acceptedQty    Int          // Net accepted (received - damaged)
+  unitCost       Float
+  batchNumber    String?
+  expiryDate     DateTime?
+  createdAt      DateTime     @default(now())
+}
+
+// -------------------------------------------------------------
+// 6. STOCK TRANSFERS (MULTI-STORE)
+// -------------------------------------------------------------
+
+model StockTransfer {
+  id              String    @id @default(cuid())
+  transferNumber  String    @unique // TRF-2026-0001
+  fromStoreId     String
+  fromStore       Store     @relation("TransfersFrom", fields: [fromStoreId], references: [id])
+  toStoreId       String
+  toStore         Store     @relation("TransfersTo", fields: [toStoreId], references: [id])
+  
+  initiatedById   String
+  initiatedBy     User      @relation("InitiatedTransfers", fields: [initiatedById], references: [id])
+  approvedById    String?
+  approvedBy      User?     @relation("ApprovedTransfers", fields: [approvedById], references: [id], onDelete: SetNull)
+  
+  status          String    @default("PENDING") // PENDING, APPROVED, DISPATCHED, IN_TRANSIT, RECEIVED, CANCELLED
+  dispatchedAt    DateTime?
+  receivedAt      DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  items           StockTransferItem[]
+}
+
+model StockTransferItem {
+  id              String        @id @default(cuid())
+  stockTransferId String
+  stockTransfer   StockTransfer @relation(fields: [stockTransferId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  
+  requestedQty    Int
+  dispatchedQty   Int           @default(0)
+  receivedQty     Int           @default(0)
+  createdAt       DateTime      @default(now())
+}
+
+// -------------------------------------------------------------
+// 7. CUSTOMERS & LOYALTY SYSTEM
+// -------------------------------------------------------------
+
+model Customer {
+  id              String          @id @default(cuid())
+  name            String
+  phone           String?         @unique
+  email           String?         @unique
+  address         String?
+  city            String?
+  postalCode      String?
+  customerType    String          @default("REGULAR") // GUEST, REGULAR, VIP, BUSINESS
+  taxId           String?         // For business customers
+  membershipNo    String?         @unique
+  loyaltyTier     String          @default("BRONZE") // BRONZE, SILVER, GOLD, VIP
+  totalSpending   Float           @default(0.0)
+  pointsBalance   Int             @default(0)
+  preferredPayment String?
+  receiptPreference String        @default("PRINT") // PRINT, EMAIL, SMS, BOTH
+  notes           String?
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  sales           Sale[]
+  loyaltyTxns     LoyaltyTransaction[]
+  refunds         Refund[]
+}
+
+model LoyaltyTransaction {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       String   // EARN, REDEEM, ADJUSTMENT
+  points     Int      // +points earned, -points redeemed
+  balanceAfter Int
+  saleId     String?
+  reason     String?
+  createdAt  DateTime @default(now())
+}
+
+// -------------------------------------------------------------
+// 8. SALES, CHECKOUT & PAYMENTS
+// -------------------------------------------------------------
+
+model Sale {
+  id             String    @id @default(cuid())
+  receiptNumber  String    @unique // e.g. RCP-2026-000101
+  invoiceNumber  String?   @unique
+  storeId        String
+  store          Store     @relation(fields: [storeId], references: [id])
+  registerId     String
+  register       CashRegister @relation(fields: [registerId], references: [id])
+  shiftId        String?
+  shift          Shift?    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  subtotal       Float     @default(0.0)
+  itemDiscount   Float     @default(0.0)
+  orderDiscount  Float     @default(0.0)
+  taxAmount      Float     @default(0.0)
+  rounding       Float     @default(0.0)
+  grandTotal     Float     // Subtotal - discounts + tax + rounding
+  totalCost      Float     @default(0.0) // Sum of line COGS for instant profit analysis
+  grossProfit    Float     @default(0.0) // grandTotal - totalCost
+
+  amountPaid     Float     @default(0.0)
+  changeGiven    Float     @default(0.0)
+  status         String    @default("COMPLETED") // COMPLETED, REFUNDED, PARTIALLY_REFUNDED, VOIDED, HELD
+  paymentStatus  String    @default("PAID") // PAID, PARTIAL, REFUNDED
+  isOffline      Boolean   @default(false)
+  syncedAt       DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  items          SaleItem[]
+  payments       Payment[]
+  refunds        Refund[]
+
+  @@index([receiptNumber])
+  @@index([createdAt])
+  @@index([storeId])
+  @@index([userId])
+}
+
+model SaleItem {
+  id             String   @id @default(cuid())
+  saleId         String
+  sale           Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id])
+  
+  productName    String
+  sku            String
+  barcode        String
+  unitPrice      Float    // Price at the time of checkout
+  costPrice      Float    @default(0.0)
+  discount       Float    @default(0.0)
+  taxRate        Float    @default(10.0)
+  taxAmount      Float    @default(0.0)
+  quantity       Int      @default(1)
+  subtotal       Float    // (unitPrice * quantity) - discount
+  total          Float    // subtotal + tax (or inclusive)
+  
+  batchNumber    String?
+  isReturned     Boolean  @default(false)
+  returnedQty    Int      @default(0)
+  createdAt      DateTime @default(now())
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  saleId        String
+  sale          Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  method        String   // CASH, CREDIT_CARD, DEBIT_CARD, MOBILE_PAYMENT, BANK_TRANSFER, GIFT_CARD, STORE_CREDIT
+  amount        Float    // Amount allocated
+  tendered      Float?   // For cash: amount handed by customer
+  change        Float?   // Change returned to customer
+  transactionRef String? // Card auth code / Mobile txn id
+  status        String   @default("SUCCESS") // SUCCESS, PENDING, FAILED
+  createdAt     DateTime @default(now())
+}
+
+// -------------------------------------------------------------
+// 9. RETURNS & REFUNDS
+// -------------------------------------------------------------
+
+model Refund {
+  id            String       @id @default(cuid())
+  refundNumber  String       @unique // REF-2026-0001
+  saleId        String
+  sale          Sale         @relation(fields: [saleId], references: [id])
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  processedById String?
+  
+  subtotal      Float
+  taxRefunded   Float        @default(0.0)
+  totalRefunded Float
+  refundMethod  String       // ORIGINAL_PAYMENT, CASH, STORE_CREDIT
+  reason        String       // DAMAGED, WRONG_ITEM, CHANGED_MIND, EXPIRED, OTHER
+  restockItems  Boolean      @default(true) // Whether to add back to inventory
+  notes         String?
+  createdAt     DateTime     @default(now())
+
+  items         RefundItem[]
+}
+
+model RefundItem {
+  id          String   @id @default(cuid())
+  refundId    String
+  refund      Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  quantity    Int
+  unitPrice   Float
+  refundTotal Float
+  reason      String
+  restocked   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+// -------------------------------------------------------------
+// 10. DISCOUNTS & PROMOTIONS
+// -------------------------------------------------------------
+
+model Promotion {
+  id          String    @id @default(cuid())
+  name        String    // e.g. "Buy 2 Coca Cola for $7", "Fresh Dairy 15% Off"
+  code        String?   @unique // Optional coupon code
+  type        String    // PERCENTAGE, FIXED, BOGO, BUY_X_GET_Y, BUNDLE, CATEGORY_DISCOUNT
+  value       Float     // e.g. 15 for 15%, 5 for $5 off, 7 for bundle price
+  buyQty      Int?      // e.g. 2 for Buy 2
+  getQty      Int?      // e.g. 1 for Get 1 Free
+  minSpend    Float?    // Minimum cart total required
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean   @default(true)
+  usageLimit  Int?
+  usageCount  Int       @default(0)
+  applicableCategories String? // Comma-separated category IDs or JSON
+  applicableProducts   String? // Comma-separated product IDs or JSON
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// -------------------------------------------------------------
+// 11. EXPENSES & FINANCIALS
+// -------------------------------------------------------------
+
+model Expense {
+  id          String   @id @default(cuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  category    String   // ELECTRICITY, RENT, MAINTENANCE, TRANSPORT, PACKAGING, SALARY, SUPPLIES, OTHER
+  amount      Float
+  expenseDate DateTime @default(now())
+  paymentMethod String @default("CASH") // CASH, BANK_TRANSFER, CARD
+  description String
+  receiptAttachment String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// -------------------------------------------------------------
+// 12. STORE & SYSTEM SETTINGS
+// -------------------------------------------------------------
+
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String   // JSON string or plain text
+  category    String   // GENERAL, TAX, RECEIPT, POS, HARDWARE, NOTIFICATIONS
+  description String?
+  updatedAt   DateTime @updatedAt
+}
