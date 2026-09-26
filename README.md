@@ -58,6 +58,20 @@ This project can be easily deployed on [Vercel](https://vercel.com/):
 3. Add the `DATABASE_URL` to the Environment Variables.
 4. Vercel will automatically build and deploy your application.
 
+## Default Login Credentials
+
+If you seeded the database (`npx prisma db seed`), you can log in with the following default accounts (Password for all is **`[Role]@12345`**):
+
+- **Super Admin:** `admin@nexamart.com` / `Admin@12345`
+- **Store Owner:** `owner@nexamart.com` / `Owner@12345`
+- **Store Manager:** `manager@nexamart.com` / `Manager@12345`
+- **Cashier:** `cashier@nexamart.com` / `Cashier@12345`
+- **Inventory Manager:** `inventory@nexamart.com` / `Inventory@12345`
+- **Purchasing Officer:** `purchasing@nexamart.com` / `Purchase@12345`
+- **Accountant:** `accountant@nexamart.com` / `Account@12345`
+- **Warehouse Staff:** `warehouse@nexamart.com` / `Warehouse@12345`
+- **Auditor:** `auditor@nexamart.com` / `Auditor@12345`
+
 ## License
 
 This project is licensed under the MIT License.
