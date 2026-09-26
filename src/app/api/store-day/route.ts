@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
 
     const refunds = await prisma.refund.findMany({
       where: {
-        storeId,
+        sale: { storeId },
         createdAt: { gte: activeDay.openedAt },
       },
     });
@@ -75,19 +75,20 @@ export async function GET(req: NextRequest) {
     let cardSales = 0;
 
     sales.forEach(sale => {
-      grossSales += sale.totalAmount + sale.discountTotal;
-      netSales += sale.totalAmount;
-      taxTotal += sale.taxTotal;
-      discountsTotal += sale.discountTotal;
+      const discountTotal = sale.itemDiscount + sale.orderDiscount;
+      grossSales += sale.grandTotal + discountTotal;
+      netSales += sale.grandTotal;
+      taxTotal += sale.taxAmount;
+      discountsTotal += discountTotal;
 
       sale.payments.forEach(p => {
         if (p.method === 'CASH') cashSales += p.amount;
-        if (p.method === 'CARD' || p.method === 'EFTPOS') cardSales += p.amount;
+        if (p.method === 'CARD' || p.method === 'EFTPOS' || p.method === 'CREDIT_CARD' || p.method === 'DEBIT_CARD') cardSales += p.amount;
       });
     });
 
     let refundsTotal = 0;
-    refunds.forEach(r => refundsTotal += r.totalAmount);
+    refunds.forEach(r => refundsTotal += r.totalRefunded);
     
     // Calculate expected cash from shifts
     let expectedCash = 0;

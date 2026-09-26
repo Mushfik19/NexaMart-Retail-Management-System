@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requirePermission } from '@/lib/auth';
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const userOrRes = await requirePermission(req, 'transfers');
     if (userOrRes instanceof Response) return userOrRes;
     const user = userOrRes;
     
-    const { id } = params;
+    const { id } = await params;
     const body = await req.json();
     const { status, notes } = body;
 
