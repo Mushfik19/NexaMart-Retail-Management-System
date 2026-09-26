@@ -16,7 +16,7 @@ NexaMart is a comprehensive Retail Management and Point of Sale (POS) system bui
 ## Tech Stack
 
 - **Frontend & Backend**: Next.js (App Router)
-- **Database**: Prisma ORM (SQLite for development, adaptable to PostgreSQL/MySQL)
+- **Database**: Prisma ORM (PostgreSQL)
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS (if configured)
 
